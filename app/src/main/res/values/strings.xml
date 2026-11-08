@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StandBy</string>
+    <string name="music_listener_label">StandBy 音楽情報</string>
+</resources>
