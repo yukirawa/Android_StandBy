@@ -12,6 +12,7 @@ enum class DismissReason(val label: String) {
     POWER("画面オフ"),
     CHARGING_OFF("充電解除"),
     PORTRAIT("縦向き"),
+    UNLOCKED("ロック解除"),
     BACKGROUND("バックグラウンド"),
 }
 

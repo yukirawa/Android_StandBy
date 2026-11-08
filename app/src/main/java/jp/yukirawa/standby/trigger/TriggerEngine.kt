@@ -15,6 +15,7 @@ enum class Suppression {
     NONE,
     USER,
     POWER,
+    UNLOCKED,
 }
 
 enum class TriggerAction {
@@ -88,6 +89,15 @@ class TriggerEngine {
                 }
             }
 
+            Suppression.UNLOCKED -> {
+                if (!input.screenOn) {
+                    suppression = Suppression.NONE
+                } else {
+                    state = TriggerState.SUPPRESSED
+                    return output(TriggerAction.NONE, "ロック解除のため待機")
+                }
+            }
+
             Suppression.NONE -> Unit
         }
 
@@ -100,7 +110,8 @@ class TriggerEngine {
 
         if (input.visible && input.screenOn && !input.locked) {
             launchRequested = false
-            state = TriggerState.ARMED
+            suppression = Suppression.UNLOCKED
+            state = TriggerState.SUPPRESSED
             return output(TriggerAction.FINISH, "ロック解除")
         }
 
@@ -149,6 +160,18 @@ class TriggerEngine {
         suppression = Suppression.POWER
         state = TriggerState.SUPPRESSED
         return output(TriggerAction.NONE, "画面オフのため抑制")
+    }
+
+    /**
+     * The activity disappeared because the user unlocked the device (or another app took over
+     * while the screen stayed on). This is not a user dismissal: stay quiet until the screen
+     * turns off again, then allow the next automatic launch.
+     */
+    fun onUnlocked(): TriggerOutput {
+        launchRequested = false
+        suppression = Suppression.UNLOCKED
+        state = TriggerState.SUPPRESSED
+        return output(TriggerAction.NONE, "ロック解除のため待機")
     }
 
     fun onVisibleLost(): TriggerOutput {

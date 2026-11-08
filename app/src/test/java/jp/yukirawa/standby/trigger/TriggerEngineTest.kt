@@ -87,6 +87,40 @@ class TriggerEngineTest {
     }
 
     @Test
+    fun `unlocking does not relaunch while the screen stays on`() {
+        val engine = TriggerEngine()
+        engine.evaluate(input(landscape = true, screenOn = true, locked = true))
+        engine.evaluate(input(landscape = true, screenOn = true, locked = false, visible = true))
+
+        val relocked = engine.evaluate(input(landscape = true, screenOn = true, locked = true))
+        assertEquals(TriggerState.SUPPRESSED, relocked.state)
+        assertEquals(TriggerAction.NONE, relocked.action)
+    }
+
+    @Test
+    fun `unlocking re-arms after the screen turns off`() {
+        val engine = TriggerEngine()
+        engine.evaluate(input(landscape = true, screenOn = true, locked = true))
+        engine.evaluate(input(landscape = true, screenOn = true, locked = false, visible = true))
+
+        val off = engine.evaluate(input(landscape = true, screenOn = false))
+        assertEquals(TriggerAction.LAUNCH, off.action)
+    }
+
+    @Test
+    fun `visible lost while unlocked is not a user dismissal`() {
+        val engine = TriggerEngine()
+        engine.evaluate(input(landscape = true, screenOn = true, locked = true))
+        engine.onUnlocked()
+
+        val on = engine.evaluate(input(landscape = true, screenOn = true, locked = false))
+        assertEquals(TriggerState.SUPPRESSED, on.state)
+
+        val off = engine.evaluate(input(landscape = true, screenOn = false))
+        assertEquals(TriggerAction.LAUNCH, off.action)
+    }
+
+    @Test
     fun `launches on locked screen`() {
         val engine = TriggerEngine()
         val output = engine.evaluate(input(landscape = true, screenOn = true, locked = true))

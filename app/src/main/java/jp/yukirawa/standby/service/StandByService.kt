@@ -43,6 +43,7 @@ class StandByService : Service() {
     private var finishingRequested = false
     private var nextLaunchAllowedAt = 0L
     private var launchCheckJob: Job? = null
+    private var launchGeneration = 0
     private var foregroundActive = false
     private var lastNotificationVisible: Boolean? = null
     private var lastNotificationAutoLaunch: Boolean? = null
@@ -74,7 +75,7 @@ class StandByService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        launchCheckJob?.cancel()
+        cancelLaunchCheck()
         serviceScope.cancel()
         container.orientation.stop()
         releaseWakeLock()
@@ -92,6 +93,7 @@ class StandByService : Service() {
                 lastConfig = config
                 if (!config.autoLaunch) {
                     container.diagnostics.add("自動起動がオフになったためサービスを停止します")
+                    cancelLaunchCheck()
                     if (container.session.visible.value) {
                         requestFinish(DismissReason.BACKGROUND)
                     }
@@ -134,19 +136,23 @@ class StandByService : Service() {
         serviceScope.launch {
             container.session.visible.collect { visible ->
                 if (visible) {
+                    cancelLaunchCheck()
                     engine.onActivityStarted()
                     nextLaunchAllowedAt = 0L
                     notifications.cancelLaunchNotifications()
                 } else if (lastVisible) {
+                    cancelLaunchCheck()
                     val wasPreview = container.session.preview.value
                     if (!wasPreview) {
                         when {
                             !lastScreenOn -> engine.onPowerOffWhileVisible()
                             finishingRequested -> Unit
-                            System.currentTimeMillis() - container.session.lastUserDismissAt.value < 1_000L ->
+                            System.currentTimeMillis() - container.session.lastUserDismissAt.value < 1_500L ->
                                 engine.onUserDismissed()
 
-                            else -> engine.onVisibleLost()
+                            // The screen stayed on but the activity vanished: the user unlocked
+                            // or another app took over. Do not treat this as a dismissal.
+                            else -> engine.onUnlocked()
                         }
                         evaluate()
                     }
@@ -163,9 +169,11 @@ class StandByService : Service() {
 
         serviceScope.launch {
             container.session.dismissEvents.collect { reason ->
+                cancelLaunchCheck()
                 when (reason) {
                     DismissReason.USER -> engine.onUserDismissed()
                     DismissReason.POWER -> engine.onPowerOffWhileVisible()
+                    DismissReason.UNLOCKED -> engine.onUnlocked()
                     DismissReason.BACKGROUND -> engine.onVisibleLost()
                     DismissReason.CHARGING_OFF, DismissReason.PORTRAIT -> Unit
                 }
@@ -204,6 +212,7 @@ class StandByService : Service() {
                 val reason = when (decision.reason) {
                     "充電解除" -> DismissReason.CHARGING_OFF
                     "縦向き" -> DismissReason.PORTRAIT
+                    "ロック解除" -> DismissReason.UNLOCKED
                     else -> DismissReason.BACKGROUND
                 }
                 requestFinish(reason)
@@ -221,21 +230,34 @@ class StandByService : Service() {
         )
         val route = launchStrategy.launch(preview = false)
         if (route != LaunchRoute.ACTIVITY) return
-        launchCheckJob?.cancel()
+        cancelLaunchCheck()
+        val generation = launchGeneration
         launchCheckJob = serviceScope.launch {
             delay(3_000)
-            if (!container.session.visible.value) {
-                container.diagnostics.add("3秒以内に表示を確認できませんでした")
-                engine.onLaunchFailed()
-                nextLaunchAllowedAt = System.currentTimeMillis() + 15_000L
-                launchStrategy.showFallback()
-                evaluate()
-            }
+            if (generation != launchGeneration) return@launch
+            if (container.session.visible.value || finishingRequested) return@launch
+            container.diagnostics.add("3秒以内に表示を確認できませんでした")
+            engine.onLaunchFailed()
+            nextLaunchAllowedAt = System.currentTimeMillis() + 15_000L
+            launchStrategy.showFallback()
+            evaluate()
         }
+    }
+
+    /**
+     * Invalidates the pending "did the activity appear?" check. Without this, dismissing or
+     * unlocking the standby within three seconds makes the check fire and re-show the activity
+     * through the full screen intent fallback.
+     */
+    private fun cancelLaunchCheck() {
+        launchGeneration++
+        launchCheckJob?.cancel()
+        launchCheckJob = null
     }
 
     private fun requestFinish(reason: DismissReason) {
         if (finishingRequested) return
+        cancelLaunchCheck()
         finishingRequested = true
         container.session.requestFinish(reason)
     }
