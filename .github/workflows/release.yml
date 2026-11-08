@@ -36,6 +36,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "KEYSTORE_BASE64 is not set; release will fall back to debug signing."
+            exit 0
+          fi
           echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release.keystore"
           cat > keystore.properties <<EOF
           storeFile=$GITHUB_WORKSPACE/release.keystore
