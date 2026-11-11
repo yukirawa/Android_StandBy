@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
 ### Added
 
 - Android の戻るジェスチャー（予測型戻る）対応
@@ -86,5 +88,6 @@
 - 診断ログ追加のたびにホーム全体が再コンポーズされていた問題
   - 診断画面内でのみ収集するように変更
 
-[Unreleased]: https://github.com/yukirawa/Android_StandBy/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/yukirawa/Android_StandBy/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/yukirawa/Android_StandBy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/yukirawa/Android_StandBy/releases/tag/v0.1.0
