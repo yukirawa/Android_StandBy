@@ -8,11 +8,16 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -36,7 +41,6 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,6 +63,7 @@ import androidx.compose.material3.ToggleButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,7 +75,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,7 +99,10 @@ import jp.yukirawa.standby.permissions.PermissionStatus
 import jp.yukirawa.standby.standby.StandByPreview
 import jp.yukirawa.standby.ui.theme.StandByTheme
 import jp.yukirawa.standby.ui.theme.accentPalette
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -128,6 +138,7 @@ private enum class MainDestination {
 @Composable
 private fun MainApp(viewModel: MainViewModel, activity: MainActivity) {
     val config by viewModel.config.collectAsStateWithLifecycle()
+    val configLoaded by viewModel.configLoaded.collectAsStateWithLifecycle()
     val battery by viewModel.battery.collectAsStateWithLifecycle()
     val weather by viewModel.weather.collectAsStateWithLifecycle()
     val permissions by viewModel.permissions.collectAsStateWithLifecycle()
@@ -136,7 +147,15 @@ private fun MainApp(viewModel: MainViewModel, activity: MainActivity) {
     var destinationName by rememberSaveable { mutableStateOf(MainDestination.HOME.name) }
     val destination = runCatching { MainDestination.valueOf(destinationName) }
         .getOrDefault(MainDestination.HOME)
-    var onboardingChecked by rememberSaveable { mutableStateOf(false) }
+    var backActive by remember { mutableStateOf(false) }
+    var backProgress by remember { mutableFloatStateOf(0f) }
+    // Follow the finger 1:1 while the gesture is active, then settle back smoothly when the
+    // gesture is cancelled (or completes and the next screen takes over).
+    val backFollow by animateFloatAsState(
+        targetValue = if (backActive) backProgress else 0f,
+        animationSpec = if (backActive) snap() else tween(220),
+        label = "back-follow",
+    )
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -158,15 +177,18 @@ private fun MainApp(viewModel: MainViewModel, activity: MainActivity) {
         scope.launch { snackbar.showSnackbar("位置情報の設定を更新しました") }
     }
 
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(400)
-        if (!viewModel.config.value.onboardingCompleted) {
+    // Decide the start destination only after the persisted config is available. This avoids
+    // flashing the home screen and then jumping to onboarding on every cold start.
+    LaunchedEffect(configLoaded, config.onboardingCompleted) {
+        if (configLoaded && !config.onboardingCompleted) {
             destinationName = MainDestination.ONBOARDING.name
         }
-        onboardingChecked = true
     }
 
-    LaunchedEffect(config.autoLaunch) {
+    // Start or stop the service only once the persisted autoLaunch value is known, so a cold
+    // start with autoLaunch=false does not briefly run the service.
+    LaunchedEffect(configLoaded, config.autoLaunch) {
+        if (!configLoaded) return@LaunchedEffect
         if (config.autoLaunch) viewModel.startService() else viewModel.stopService()
     }
 
@@ -174,12 +196,22 @@ private fun MainApp(viewModel: MainViewModel, activity: MainActivity) {
         destinationName = next.name
     }
 
-    val notificationPermission = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            viewModel.openNotificationSettings()
+    // Predictive back for in-app navigation: the content follows the gesture and returns
+    // home when it completes. Screens with their own handler (onboarding steps) win.
+    PredictiveBackHandler(enabled = destination != MainDestination.HOME) { progress ->
+        backActive = true
+        try {
+            progress.collect { event -> backProgress = event.progress }
+            backActive = false
+            navigate(MainDestination.HOME)
+        } catch (cancellation: CancellationException) {
+            backActive = false
+            throw cancellation
         }
+    }
+
+    val notificationPermission = {
+        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
     val locationPermission = {
         locationLauncher.launch(
@@ -201,9 +233,19 @@ private fun MainApp(viewModel: MainViewModel, activity: MainActivity) {
                 ),
             ),
     ) {
+        if (!configLoaded) {
+            // The persisted config is still loading; keep the black background only.
+            return@Box
+        }
         AnimatedContent(
             targetState = destination,
             transitionSpec = { fadeIn() togetherWith fadeOut() },
+            modifier = Modifier.graphicsLayer {
+                translationX = size.width * 0.16f * backFollow
+                scaleX = 1f - 0.04f * backFollow
+                scaleY = 1f - 0.04f * backFollow
+                alpha = 1f - 0.25f * backFollow
+            },
             label = "main-nav",
         ) { screen ->
             when (screen) {
@@ -875,12 +917,12 @@ private fun DiagnosticsScreen(
     val entries by viewModel.diagnostics.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val crashFile = remember { File(context.filesDir, StandByApplication.CRASH_FILE) }
-    var crashLog by remember {
-        mutableStateOf(
-            runCatching {
-                crashFile.takeIf { it.exists() }?.readText()
-            }.getOrNull(),
-        )
+    var crashLog by remember { mutableStateOf<String?>(null) }
+    // Even a small crash log is file IO: keep it off the main thread.
+    LaunchedEffect(crashFile) {
+        crashLog = withContext(Dispatchers.IO) {
+            runCatching { crashFile.takeIf { it.exists() }?.readText() }.getOrNull()
+        }
     }
     Column(
         Modifier
@@ -1098,6 +1140,11 @@ private fun OnboardingScreen(
     var step by rememberSaveable { mutableIntStateOf(0) }
     val steps = 4
 
+    // System back mirrors the on-screen buttons: step back, or leave (= skip) from the first page.
+    BackHandler {
+        if (step > 0) step-- else onFinish()
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -1265,19 +1312,23 @@ private fun ScreenHeader(title: String, onBack: () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "←",
-            color = Color.White,
+        Box(
             modifier = Modifier
+                .size(44.dp)
                 .clip(RoundedCornerShape(50))
-                .clickable(onClick = onBack)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.titleLarge,
-        )
+                .clickable(role = Role.Button, onClickLabel = "戻る", onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "←",
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
         Text(
             text = title,
             color = Color.White,
-            modifier = Modifier.padding(start = 4.dp),
+            modifier = Modifier.padding(start = 8.dp),
             style = MaterialTheme.typography.titleLargeEmphasized,
         )
     }

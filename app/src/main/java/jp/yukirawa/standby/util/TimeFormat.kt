@@ -5,9 +5,17 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 object TimeFormat {
     private val japanese = Locale.JAPANESE
+
+    // Patterns are compiled once. The clock formats on every tick, so rebuilding a
+    // DateTimeFormatter each time would be pure allocation churn.
+    private val formatters = ConcurrentHashMap<String, DateTimeFormatter>()
+
+    private fun formatter(pattern: String): DateTimeFormatter =
+        formatters.computeIfAbsent(pattern) { DateTimeFormatter.ofPattern(it, japanese) }
 
     fun zoned(now: Instant = Instant.now(), zoneId: ZoneId = ZoneId.systemDefault()): ZonedDateTime =
         now.atZone(zoneId)
@@ -23,7 +31,7 @@ object TimeFormat {
             showSeconds -> "h:mm:ss"
             else -> "h:mm"
         }
-        return DateTimeFormatter.ofPattern(pattern, japanese).format(time)
+        return formatter(pattern).format(time)
     }
 
     fun amPm(time: ZonedDateTime, use24Hour: Boolean): String? {
@@ -32,8 +40,8 @@ object TimeFormat {
     }
 
     fun date(time: ZonedDateTime, pattern: String = "M月d日 (E)"): String =
-        runCatching { DateTimeFormatter.ofPattern(pattern, japanese).format(time) }
-            .getOrElse { DateTimeFormatter.ofPattern("M月d日 (E)", japanese).format(time) }
+        runCatching { formatter(pattern).format(time) }
+            .getOrElse { formatter("M月d日 (E)").format(time) }
 
     fun worldTime(instant: Instant, zoneId: String, use24Hour: Boolean): String =
         runCatching {

@@ -39,6 +39,7 @@ import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +57,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import jp.yukirawa.standby.data.battery.BatteryState
 import jp.yukirawa.standby.data.music.MusicState
 import jp.yukirawa.standby.data.weather.WeatherState
@@ -151,14 +155,7 @@ fun StandByScreen(
         accentPalette(config.accent, config.nightMode)
     }
 
-    var now by remember { mutableStateOf(Instant.now()) }
-    val needsSeconds = config.showSeconds || config.clockFace == ClockFace.ANALOG
-    LaunchedEffect(needsSeconds) {
-        while (isActive) {
-            now = Instant.now()
-            delay(if (needsSeconds) 1_000L else TimeFormat.nextMinuteDelayMillis())
-        }
-    }
+    val now = rememberNowTicker(config.needsSecondTick)
 
     var dimmed by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(false) }
@@ -450,7 +447,7 @@ private fun PreviewBadge(palette: AccentPalette) {
 @Composable
 private fun BottomHint(palette: AccentPalette, dimmed: Boolean) {
     Text(
-        text = if (dimmed) "タップで復帰" else "長押しでコントロール・下スワイプで閉じる",
+        text = if (dimmed) "タップで復帰" else "長押しでコントロール・下スワイプ / 戻るで閉じる",
         color = palette.muted.copy(alpha = if (dimmed) 0.5f else 0.35f),
         modifier = Modifier.fillMaxWidth(),
         style = MaterialTheme.typography.labelSmall,
@@ -461,7 +458,7 @@ private fun BottomHint(palette: AccentPalette, dimmed: Boolean) {
 @Composable
 private fun HeroLayout(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     weather: WeatherState,
     music: MusicState,
@@ -504,7 +501,7 @@ private fun HeroLayout(
 @Composable
 private fun SplitLayout(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     weather: WeatherState,
     music: MusicState,
@@ -558,7 +555,7 @@ private fun SplitLayout(
 @Composable
 private fun StackLayout(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     weather: WeatherState,
     music: MusicState,
@@ -1011,6 +1008,33 @@ private fun SunGlyph(brightness: Float, color: Color) {
     }
 }
 
+/**
+ * Single ticking [State] shared by the clock composables. The value is read where it is shown,
+ * so a tick invalidates the clock only instead of the whole standby screen. Ticking pauses when
+ * the screen is not started (app backgrounded, or the preview scrolled out of view).
+ */
+@Composable
+internal fun rememberNowTicker(needsSeconds: Boolean): State<Instant> {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val now = remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(lifecycleOwner, needsSeconds) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                now.value = Instant.now()
+                delay(
+                    if (needsSeconds) TimeFormat.nextSecondDelayMillis()
+                    else TimeFormat.nextMinuteDelayMillis(),
+                )
+            }
+        }
+    }
+    return now
+}
+
+/** Analog clocks need a second hand even when the digital seconds are hidden. */
+internal val StandByConfig.needsSecondTick: Boolean
+    get() = showSeconds || clockFace == ClockFace.ANALOG
+
 @Composable
 fun StandByPreview(
     config: StandByConfig,
@@ -1019,17 +1043,19 @@ fun StandByPreview(
     val palette = remember(config.accent, config.nightMode) {
         accentPalette(config.accent, config.nightMode)
     }
+    // Keep the preview clock live, aligned to the next second or minute.
+    val now = rememberNowTicker(config.needsSecondTick)
     Box(
         modifier
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black),
     ) {
         if (config.clockFace == ClockFace.SOLAR) {
-            SolarSky(now = Instant.now(), palette = palette)
+            SolarSky(now = now, palette = palette)
         }
         ClockSection(
             config = config,
-            now = Instant.now(),
+            now = now,
             palette = palette,
             modifier = Modifier.fillMaxSize(),
         )

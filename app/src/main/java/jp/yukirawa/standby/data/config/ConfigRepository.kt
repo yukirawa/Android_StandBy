@@ -25,6 +25,10 @@ class ConfigRepository(
     private val _config = MutableStateFlow(StandByConfig())
     val config: StateFlow<StandByConfig> = _config.asStateFlow()
 
+    /** True once the persisted value has been applied (or the read failed). */
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+
     private var persistJob: Job? = null
     private var changedSinceLoad = false
 
@@ -40,6 +44,7 @@ class ConfigRepository(
             if (!changedSinceLoad && preferences != null) {
                 _config.value = StandByConfig.fromJson(preferences[key])
             }
+            _loaded.value = true
         }
     }
 

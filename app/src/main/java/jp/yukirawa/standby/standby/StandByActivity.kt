@@ -60,13 +60,8 @@ class StandByActivity : ComponentActivity() {
                 }
             }
         }
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                container.config.config.collect { config ->
-                    setWindowBrightness(config.brightness)
-                }
-            }
-        }
+        // Window brightness is applied by the Compose screen (dim / normal), which already
+        // observes the config. A second collector here would fight with the dim animation.
 
         setContent {
             StandByTheme {
@@ -117,8 +112,10 @@ class StandByActivity : ComponentActivity() {
     fun finishWithFade() {
         if (finishing) return
         finishing = true
+        // overridePendingTransition is deprecated and ignored on Android 14+; use the
+        // modern equivalent so the close still fades out.
+        overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, android.R.anim.fade_out)
         finish()
-        overridePendingTransition(0, android.R.anim.fade_out)
     }
 
     private fun hideSystemBars() {

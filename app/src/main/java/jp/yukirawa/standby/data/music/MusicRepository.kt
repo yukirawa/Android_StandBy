@@ -8,12 +8,14 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import androidx.compose.runtime.Immutable
 import androidx.core.app.NotificationManagerCompat
 import jp.yukirawa.standby.data.DiagnosticsLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+@Immutable
 data class MusicState(
     val hasNotificationAccess: Boolean = false,
     val hasSession: Boolean = false,

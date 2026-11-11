@@ -22,6 +22,7 @@ import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +52,7 @@ import jp.yukirawa.standby.data.weather.WeatherKind
 import jp.yukirawa.standby.data.weather.WeatherState
 import jp.yukirawa.standby.model.WidgetType
 import jp.yukirawa.standby.ui.theme.AccentPalette
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -309,7 +311,7 @@ fun BatteryWidget(
                     }
                     battery.watts?.let {
                         Text(
-                            text = "約${String.format("%.1f", it)}W",
+                            text = "約${String.format(Locale.US, "%.1f", it)}W",
                             color = palette.muted,
                             style = TextStyle(fontSize = 8.sp),
                         )
@@ -328,6 +330,8 @@ private fun AlbumArt(
     size: Dp,
 ) {
     val shape = RoundedCornerShape(10.dp)
+    // asImageBitmap() wraps the bitmap in a new object; keep it stable across recompositions.
+    val albumArt = remember(music.albumArt) { music.albumArt?.asImageBitmap() }
     Box(
         Modifier.size(size).clip(shape).background(palette.cardBorder),
         contentAlignment = Alignment.Center,
@@ -338,8 +342,8 @@ private fun AlbumArt(
             null
         }
         when {
-            music.albumArt != null -> Image(
-                bitmap = music.albumArt.asImageBitmap(),
+            albumArt != null -> Image(
+                bitmap = albumArt,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

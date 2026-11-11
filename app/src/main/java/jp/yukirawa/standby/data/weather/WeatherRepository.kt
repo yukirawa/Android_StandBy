@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.os.CancellationSignal
+import androidx.compose.runtime.Immutable
 import androidx.core.content.ContextCompat
 import jp.yukirawa.standby.data.DiagnosticsLog
 import kotlinx.coroutines.CoroutineScope
@@ -43,12 +44,14 @@ enum class WeatherKind {
     THUNDER,
 }
 
+@Immutable
 data class HourlyWeather(
     val time: LocalDateTime,
     val temperature: Float,
     val code: Int,
 )
 
+@Immutable
 data class WeatherState(
     val available: Boolean = false,
     val temperature: Float? = null,
@@ -160,10 +163,22 @@ class WeatherRepository(
     private val cacheFile = File(context.filesDir, "weather_cache.json")
     private val httpExecutor = Executors.newSingleThreadExecutor()
 
-    private val _state = MutableStateFlow(loadCache() ?: WeatherState())
+    private val _state = MutableStateFlow(WeatherState())
     val state: StateFlow<WeatherState> = _state.asStateFlow()
 
     private var inFlight = false
+
+    init {
+        // Reading the cache file on the main thread during Application.onCreate is a
+        // startup hiccup; load it in the background instead.
+        scope.launch {
+            val cached = withContext(Dispatchers.IO) { loadCache() } ?: return@launch
+            val current = _state.value
+            if (!current.available && !current.loading) {
+                _state.value = cached
+            }
+        }
+    }
 
     fun refresh() {
         if (inFlight) return
@@ -179,7 +194,7 @@ class WeatherRepository(
                         " (${fresh.locationLabel})",
                 )
             } else {
-                val cached = loadCache()
+                val cached = withContext(Dispatchers.IO) { loadCache() }
                 _state.value = (cached ?: _state.value).copy(
                     loading = false,
                     error = "天気を取得できませんでした",
@@ -211,8 +226,7 @@ class WeatherRepository(
                 .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@runCatching null
-                val body = response.body?.string() ?: return@runCatching null
-                parse(body, label, fallback)
+                parse(response.body.string(), label, fallback)
             }
         }.getOrNull()
     }
@@ -324,8 +338,10 @@ class WeatherRepository(
         else WeatherState.fromCacheJson(JSONObject(cacheFile.readText()))
     }.getOrNull()?.copy(loading = false, error = null)
 
-    private fun saveCache(state: WeatherState) {
-        runCatching { cacheFile.writeText(state.toCacheJson().toString()) }
+    private suspend fun saveCache(state: WeatherState) {
+        withContext(Dispatchers.IO) {
+            runCatching { cacheFile.writeText(state.toCacheJson().toString()) }
+        }
     }
 
     private companion object {

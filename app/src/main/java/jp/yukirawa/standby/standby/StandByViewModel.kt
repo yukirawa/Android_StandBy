@@ -15,10 +15,8 @@ class StandByViewModel(private val container: AppContainer) : ViewModel() {
     val music = container.music.state
     val battery = container.battery.state
 
-    init {
-        container.weather.refresh()
-        container.music.refresh()
-    }
+    // Refreshes are triggered from onResume via [onVisible]; doing them here as well would
+    // duplicate the work on every launch.
 
     fun onVisible() {
         container.music.refresh()

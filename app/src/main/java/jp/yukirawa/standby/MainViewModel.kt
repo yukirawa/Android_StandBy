@@ -21,9 +21,9 @@ class MainViewModel(
     private val appContext: Context,
 ) : ViewModel() {
     val config = container.config.config
+    val configLoaded = container.config.loaded
     val battery = container.battery.state
     val weather = container.weather.state
-    val music = container.music.state
     val diagnostics = container.diagnostics.entries
     val sessionVisible = container.session.visible
 

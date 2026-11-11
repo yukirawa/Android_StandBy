@@ -1,5 +1,6 @@
 package jp.yukirawa.standby.model
 
+import androidx.compose.runtime.Immutable
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -44,6 +45,11 @@ enum class WidgetSlot(val index: Int, val label: String) {
     RIGHT(2, "右"),
 }
 
+/**
+ * All fields are replaced through [copy], never mutated in place. Marking the class as
+ * [Immutable] lets Compose skip subtrees that receive an unchanged config.
+ */
+@Immutable
 data class StandByConfig(
     val version: Int = 1,
     val presetId: String = Preset.MIDNIGHT.id,

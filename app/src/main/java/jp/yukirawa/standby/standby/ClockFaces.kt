@@ -24,6 +24,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,14 +55,20 @@ import jp.yukirawa.standby.ui.theme.AccentPalette
 import jp.yukirawa.standby.util.TimeFormat
 import java.time.Instant
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
+import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
+/**
+ * [now] is passed as a [State] on purpose: the value is read inside each clock, so a tick only
+ * invalidates the clock instead of the whole standby screen.
+ */
 @Composable
 fun ClockSection(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     modifier: Modifier = Modifier,
 ) {
@@ -74,12 +84,12 @@ fun ClockSection(
 @Composable
 fun DigitalClock(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     modifier: Modifier = Modifier,
 ) {
     val zone = ZoneId.systemDefault()
-    val time = now.atZone(zone)
+    val time = now.value.atZone(zone)
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val size = minOf(maxHeight.value * 0.54f, maxWidth.value * 0.19f).coerceIn(54f, 190f)
         val weight = config.fontWeight.composeWeight()
@@ -128,11 +138,18 @@ fun DigitalClock(
 @Composable
 private fun AnalogClock(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     modifier: Modifier = Modifier,
 ) {
-    val time = now.atZone(ZoneId.systemDefault())
+    val time = now.value.atZone(ZoneId.systemDefault())
+    // Reused across ticks instead of allocating a Paint on every frame.
+    val datePaint = remember {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+        }
+    }
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val diameter = min(maxWidth.value, maxHeight.value).coerceIn(130f, 300f)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -201,19 +218,15 @@ private fun AnalogClock(
                     style = Stroke(1.dp.toPx()),
                 )
                 drawIntoCanvas { canvas ->
-                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = palette.primary.toArgb()
-                        textAlign = Paint.Align.CENTER
-                        textSize = radius * 0.13f
-                        typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-                    }
+                    datePaint.color = palette.primary.toArgb()
+                    datePaint.textSize = radius * 0.13f
                     val baseline = windowTopLeft.y + windowSize.height / 2f -
-                        (paint.ascent() + paint.descent()) / 2f
+                        (datePaint.ascent() + datePaint.descent()) / 2f
                     canvas.nativeCanvas.drawText(
                         time.dayOfMonth.toString(),
                         center.x,
                         baseline,
-                        paint,
+                        datePaint,
                     )
                 }
             }
@@ -236,11 +249,12 @@ private fun AnalogClock(
 @Composable
 private fun WorldClock(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     modifier: Modifier = Modifier,
 ) {
-    val time = now.atZone(ZoneId.systemDefault())
+    val instant = now.value
+    val time = instant.atZone(ZoneId.systemDefault())
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val size = minOf(maxHeight.value * 0.4f, maxWidth.value * 0.15f).coerceIn(46f, 136f)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -282,7 +296,7 @@ private fun WorldClock(
                             ),
                         )
                         Text(
-                            text = TimeFormat.worldTime(now, zoneId, config.use24Hour),
+                            text = TimeFormat.worldTime(instant, zoneId, config.use24Hour),
                             color = palette.primary,
                             maxLines = 1,
                             style = TextStyle(
@@ -301,7 +315,7 @@ private fun WorldClock(
 @Composable
 private fun SolarClock(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     modifier: Modifier = Modifier,
 ) {
@@ -311,16 +325,17 @@ private fun SolarClock(
 @Composable
 private fun FlipClock(
     config: StandByConfig,
-    now: Instant,
+    now: State<Instant>,
     palette: AccentPalette,
     modifier: Modifier = Modifier,
 ) {
-    val time = now.atZone(ZoneId.systemDefault())
+    val time = now.value.atZone(ZoneId.systemDefault())
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val card = minOf(maxHeight.value * 0.42f, maxWidth.value * 0.115f).coerceIn(38f, 100f)
-        val hours = String.format("%02d", if (config.use24Hour) time.hour else ((time.hour % 12).takeIf { it != 0 } ?: 12))
-        val minutes = String.format("%02d", time.minute)
-        val seconds = String.format("%02d", time.second)
+        // Locale-independent digits: the flip clock always shows western numerals.
+        val hours = String.format(Locale.US, "%02d", if (config.use24Hour) time.hour else ((time.hour % 12).takeIf { it != 0 } ?: 12))
+        val minutes = String.format(Locale.US, "%02d", time.minute)
+        val seconds = String.format(Locale.US, "%02d", time.second)
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -406,8 +421,12 @@ private fun FlipDigit(value: Char, card: Float, palette: AccentPalette) {
 }
 
 @Composable
-fun SolarSky(now: Instant, palette: AccentPalette) {
-    val time = now.atZone(ZoneId.systemDefault())
+fun SolarSky(now: State<Instant>, palette: AccentPalette) {
+    // The sky changes slowly; only recompute it when the minute changes instead of every tick.
+    val minute by remember(now) {
+        derivedStateOf { now.value.truncatedTo(ChronoUnit.MINUTES) }
+    }
+    val time = minute.atZone(ZoneId.systemDefault())
     val hour = time.hour + time.minute / 60f
     val (top, glow) = when {
         hour < 5f || hour >= 20f -> Color(0xFF07101F) to Color(0xFF16213A)
